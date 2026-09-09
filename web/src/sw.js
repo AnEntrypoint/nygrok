@@ -113,8 +113,19 @@ self.addEventListener('fetch', (event) => {
     return
   }
   if (url.origin !== self.location.origin || !url.pathname.startsWith(scopePath())) return
+  // event.clientId only — NOT event.resultingClientId. A navigation request's
+  // resulting client doesn't exist until AFTER this fetch event resolves, so
+  // awaiting self.clients.get(resultingClientId) here is circular: the
+  // navigation can't complete until we respond, and we'd be waiting for the
+  // client that navigation would create. Confirmed by hand: this deadlocked
+  // every reload of the bootstrap page itself once the service worker was
+  // actually controlling it (a fresh, uncontrolled first load never hit this
+  // path at all, masking the bug until a second visit). event.clientId is
+  // already correctly empty for navigations, which is exactly right here —
+  // a real navigation always matches matchTunnel() directly (its URL already
+  // carries /t/<seed>/) or isn't tunnel content at all.
   event.respondWith((async () => {
-    const seed = await resolveSeedForClient(event.clientId || event.resultingClientId)
+    const seed = await resolveSeedForClient(event.clientId)
     if (!seed) return fetch(event.request)
     const fallbackMatch = { seed, upstreamPath: url.pathname + url.search, prefix: scopePath() + 't/' + seed }
     return proxyFetch(fallbackMatch, event.request)
