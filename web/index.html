@@ -6,6 +6,14 @@
 <title>nygrok</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0b0f14; color: #d7dee5; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  /* #status/#gate below set their own `display: flex` (ID selectors), which
+     otherwise always beats the browser's default `[hidden] { display: none }`
+     rule (a lower-specificity attribute selector) -- without this, toggling
+     the `hidden` property never actually hides them; they'd just keep
+     rendering, stacked in normal document flow below whatever's visible
+     above (exactly how the password gate and a lingering "connecting..."
+     status ended up both on-screen at once, one below the other). */
+  [hidden] { display: none !important; }
   #status { display: flex; align-items: center; justify-content: center; height: 100%; padding: 2rem; text-align: center; }
   #status.error { color: #ff8080; }
   #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
