@@ -159,7 +159,18 @@ async function proxyFetch(match, request) {
   // entirely. Same rewrite rules as HTML/CSS URLs, applied to every response
   // (not just text ones), since a redirect can point at any resource type.
   if (rawResponse.headers.location) {
-    rawResponse.headers = { ...rawResponse.headers, location: rewriteUrl(rawResponse.headers.location, { prefix: match.prefix, targetHost: bridge.targetHost }) }
+    const rewrittenLocation = rewriteUrl(rawResponse.headers.location, { prefix: match.prefix, targetHost: bridge.targetHost })
+    if (new URL(request.url).searchParams.has('__nygrok_debug_redirect')) {
+      return new Response(JSON.stringify({
+        status: rawResponse.status,
+        originalLocation: rawResponse.headers.location,
+        rewrittenLocation,
+        prefix: match.prefix,
+        targetHost: bridge.targetHost,
+        headerKeys: Object.keys(rawResponse.headers)
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    rawResponse.headers = { ...rawResponse.headers, location: rewrittenLocation }
   }
 
   const contentType = rawResponse.headers['content-type'] || ''
