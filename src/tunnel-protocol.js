@@ -34,10 +34,15 @@ export const FRAME = {
 
 const JSON_TYPES = new Set([FRAME.REQ_HEAD, FRAME.RES_HEAD, FRAME.RES_ERROR, FRAME.WS_OPEN, FRAME.WS_ACCEPT, FRAME.WS_CLOSE, FRAME.INFO])
 
-// Max payload bytes per BODY/WS_MSG frame. Kept well under the ~256KB most
-// browsers reliably deliver in one RTCDataChannel message, with headroom for
-// the frame header.
-export const MAX_CHUNK = 16 * 1024
+// Max payload bytes per REQ_BODY frame (RES_BODY/WS_MSG don't go through
+// chunkBody() at all — see tunnel-server.js). Well under the ~256KB most
+// browsers/node-datachannel reliably deliver in one RTCDataChannel message;
+// the frame header itself is only 5 bytes, so headroom is enormous relative
+// to that ceiling — 64KB keeps the per-frame count (and its fixed
+// encodeFrame/sendFrame/dc.send overhead) an order of magnitude lower than
+// 16KB for large uploads while staying well clear of BUFFERED_AMOUNT_HIGH
+// (256KB) in tunnel-server.js/client.js's backpressure gate.
+export const MAX_CHUNK = 64 * 1024
 
 const te = new TextEncoder()
 const td = new TextDecoder()

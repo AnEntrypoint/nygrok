@@ -75,11 +75,25 @@ export function deriveRoomFromSeed(seed, password = '') {
 // when fielding many remote peers). It stays opt-in rather than default
 // because local dev/testing routinely spins up same-process peer pairs,
 // which would silently break if this defaulted on.
+// maxMessageSize is deliberately set well above tunnel-protocol.js's own
+// MAX_CHUNK (64KB) — app-level chunking is what actually bounds message size
+// today, this just makes the native SCTP association's own ceiling a
+// documented, deliberate choice instead of whatever node-datachannel
+// defaults to, so headroom stays available if MAX_CHUNK ever grows.
+const MAX_MESSAGE_SIZE = 256 * 1024
+
 export function makeNativePeerConnectionFactory({ portRangeBegin, portRangeEnd, proxy, udpMux = false, PeerConnection, PolyfillRTCPeerConnection }) {
   return (config) => {
     const nativeConfig = {
-      iceServers: (config.iceServers || []).map((s) => s.urls)
+      iceServers: (config.iceServers || []).map((s) => s.urls),
+      maxMessageSize: MAX_MESSAGE_SIZE
     }
+    // wireweave passes iceTransportPolicy in its createPeerConnection config
+    // (defaults to 'all'); node-datachannel's native RtcConfig honors it
+    // (unlike bundlePolicy/iceCandidatePoolSize, which are W3C-only concepts
+    // with no native-peer equivalent, so those two are correctly not
+    // forwarded here) — forward it so nothing upstream is silently dropped.
+    if (config.iceTransportPolicy) nativeConfig.iceTransportPolicy = config.iceTransportPolicy
     if (udpMux) nativeConfig.enableIceUdpMux = true
     if (portRangeBegin != null) nativeConfig.portRangeBegin = portRangeBegin
     if (portRangeEnd != null) nativeConfig.portRangeEnd = portRangeEnd
@@ -134,6 +148,19 @@ export async function createRtcTransport({ namespace = 'nygrok', portRangeBegin,
 
   const relayPool = new RelayPool({ verifyEvent: NostrTools.verifyEvent, WebSocketImpl: WebSocket })
   relayPool.connect()
+
+  // Process-wide (node-datachannel's setSctpSettings applies to every future
+  // SCTP association, not per-connection — fine for nygrok's one-host-
+  // process model). Only delayedSackTime is tuned: it directly shortens the
+  // ACK-clocked round trip on the reliable channel every REQ/RES frame rides
+  // (default is on the order of 200ms; usrsctp's own minimum is far lower),
+  // and is well-understood/low-risk to lower. congestionControlModule and
+  // initialCongestionWindow are deliberately left untouched — their valid
+  // ranges/semantics aren't pinned down precisely enough here to tune
+  // blind without being able to benchmark the effect.
+  try {
+    ndc.setSctpSettings({ delayedSackTime: 20 })
+  } catch {}
 
   const fsm = createFSM(XState)
   const createPeerConnection = makeNativePeerConnectionFactory({

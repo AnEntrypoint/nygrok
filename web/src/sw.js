@@ -132,8 +132,35 @@ self.addEventListener('fetch', (event) => {
   })())
 })
 
+// Exactly the two content-types rewriteHtml/rewriteCss actually handle.
+// Everything else (JS, JSON, XML, SVG, images, fonts, binary) takes the
+// streaming passthrough branch in proxyFetch below — which matters now that
+// tunnel-server.js only decompresses/strips Content-Encoding for html/css
+// too (see its needsTextRewrite): buffering anything else through
+// Response.text() here would force-decode still-compressed bytes as UTF-8
+// and corrupt them, since Response.text()/arrayBuffer() don't perform
+// Content-Encoding decompression themselves (only the browser's real
+// network/resource-loader layer does that transparently, which is exactly
+// what consumes the passthrough Response this function returns unread).
 function isTextType(contentType) {
-  return /^(text\/|application\/(javascript|json|xml|xhtml\+xml)|image\/svg\+xml)/i.test(contentType || '')
+  return /html/i.test(contentType) || /css/i.test(contentType)
+}
+
+// Request headers reflect this proxy PAGE's own fetch context, not a real
+// client's — Sec-Fetch-*/Sec-CH-UA* describe the tunnel page's navigation
+// mode and (this page's own) UA hints, meaningless once relayed to an
+// arbitrary upstream, and repeated verbatim on every one of potentially
+// hundreds of concurrent subresource requests a real page load makes.
+const DROP_REQUEST_HEADER_PREFIXES = ['sec-fetch-', 'sec-ch-ua']
+
+function filterRequestHeaders(headers) {
+  const out = {}
+  for (const [k, v] of headers.entries()) {
+    const lower = k.toLowerCase()
+    if (DROP_REQUEST_HEADER_PREFIXES.some((p) => lower.startsWith(p))) continue
+    out[k] = v
+  }
+  return out
 }
 
 // Node's http IncomingMessage.headers gives repeated headers (set-cookie in
@@ -171,8 +198,7 @@ async function proxyFetch(match, request) {
 
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
   const body = hasBody ? await request.clone().arrayBuffer() : null
-  const reqHeaders = {}
-  for (const [k, v] of request.headers.entries()) reqHeaders[k] = v
+  const reqHeaders = filterRequestHeaders(request.headers)
 
   const { port1, port2 } = new MessageChannel()
 
@@ -188,7 +214,12 @@ async function proxyFetch(match, request) {
         resolved = true
         resolve({ status: msg.status, statusText: msg.statusText, headers: msg.headers, stream, controller })
       } else if (msg.type === 'body') {
-        try { controller.enqueue(new Uint8Array(msg.chunk)) } catch {}
+        // msg.chunk is the ORIGINAL transferred buffer (header bytes still
+        // attached) — client.js stopped slicing out just the payload before
+        // transfer, so byteOffset/byteLength (also sent) mark exactly which
+        // range is the real payload; a couple of unused header bytes tag
+        // along in the transferred buffer for free, at zero copy cost here.
+        try { controller.enqueue(new Uint8Array(msg.chunk, msg.byteOffset, msg.byteLength)) } catch {}
       } else if (msg.type === 'end') {
         try { controller.close() } catch {}
         port1.close()

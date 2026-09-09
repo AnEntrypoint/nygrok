@@ -13,11 +13,33 @@ import https from 'node:https'
 import zlib from 'node:zlib'
 import { WebSocket } from 'ws'
 import { createRtcTransport, deriveRoomFromSeed, describeSelectedCandidatePair } from './rtc-node.js'
-import { FRAME, encodeFrame, decodeFrame, chunkBody } from './tunnel-protocol.js'
+import { FRAME, encodeFrame, decodeFrame, MAX_CHUNK } from './tunnel-protocol.js'
 
-// Headers we recompute ourselves rather than forward verbatim.
+// Headers we recompute ourselves rather than forward verbatim. accept-encoding
+// is handled separately (see ACCEPT_ENCODING below) — we explicitly WANT to
+// set it, not strip whatever the browser sent (which is normally nothing:
+// Accept-Encoding is a forbidden/browser-managed header the Fetch API
+// doesn't expose to JS, so web/src/sw.js's captured request.headers never
+// actually carries one anyway).
 const STRIP_REQUEST_HEADERS = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length', 'accept-encoding'])
+// content-encoding is stripped here too, but only used for the html/css path
+// that must decompress to rewrite text — everything else keeps it (see
+// RESPONSE_HEADERS_KEEP_ENCODING below) so the browser can decompress the
+// passed-through original bytes natively instead of the data channel
+// carrying the larger decompressed form.
 const STRIP_RESPONSE_HEADERS = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-encoding', 'content-length', 'upgrade'])
+const RESPONSE_HEADERS_KEEP_ENCODING = new Set([...STRIP_RESPONSE_HEADERS].filter((h) => h !== 'content-encoding'))
+// Ask the local target to compress non-rewritten responses (JS, JSON,
+// images, fonts, binary — the vast majority of a real app's bytes): those
+// pass through unmodified (see needsTextRewrite below), so a compressed
+// upstream response means fewer bytes crossing the WebRTC data channel,
+// with the browser's own fetch/Response machinery decompressing it exactly
+// as it would for a normal (non-tunneled) network response.
+const ACCEPT_ENCODING = 'gzip, br'
+
+function needsTextRewrite(contentType) {
+  return /html/i.test(contentType) || /css/i.test(contentType)
+}
 
 const BUFFERED_AMOUNT_HIGH = 256 * 1024
 
@@ -25,9 +47,11 @@ function waitForDrain(dc) {
   if (!dc || typeof dc.bufferedAmount !== 'number' || dc.bufferedAmount <= BUFFERED_AMOUNT_HIGH) return Promise.resolve()
   return new Promise((resolve) => {
     let done = false
+    let timer = null
     const finish = () => {
       if (done) return
       done = true
+      if (timer !== null) clearTimeout(timer)
       try { dc.removeEventListener('bufferedamountlow', finish) } catch {}
       resolve()
     }
@@ -38,7 +62,7 @@ function waitForDrain(dc) {
       resolve()
       return
     }
-    setTimeout(finish, 250)
+    timer = setTimeout(finish, 250)
   })
 }
 
@@ -46,12 +70,6 @@ async function sendFrame(session, peerPubkey, type, id, payload) {
   const dc = session.peers.get(peerPubkey)?.dc
   await waitForDrain(dc)
   session.send(peerPubkey, encodeFrame(type, id, payload))
-}
-
-async function sendBody(session, peerPubkey, type, id, bodyBytes) {
-  for (const chunk of chunkBody(bodyBytes)) {
-    await sendFrame(session, peerPubkey, type, id, chunk)
-  }
 }
 
 function pickHeaders(headers, strip) {
@@ -89,6 +107,13 @@ function makeTunnelRouter(session, { target, onLog }) {
   const targetUrl = new URL(target)
   const httpMod = targetUrl.protocol === 'https:' ? https : http
   const wsProto = targetUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  // Shared across every request to this target (all peers, all requests):
+  // without keepAlive, Node's default agent forces "Connection: close",
+  // meaning a real app's dozens-to-hundreds of requests each pay a fresh
+  // TCP (and, for an https target, TLS) handshake plus teardown into
+  // TIME_WAIT. The underlying socket pool is already keyed by host:port, so
+  // one shared agent, not one per peer, is both correct and sufficient.
+  const agent = new (targetUrl.protocol === 'https:' ? https.Agent : http.Agent)({ keepAlive: true, keepAliveMsecs: 1000 })
 
   const peerState = new Map() // peerPubkey -> { pendingReqs: Map<id,{head,chunks}>, sockets: Map<id,WebSocket> }
   const stateFor = (peerPubkey) => {
@@ -106,16 +131,33 @@ function makeTunnelRouter(session, { target, onLog }) {
       return
     }
     const headers = pickHeaders(head.headers, STRIP_REQUEST_HEADERS)
-    const req = httpMod.request(upstreamUrl, { method: head.method, headers }, (res) => {
+    // Encourage the local target to compress everything except what we're
+    // about to text-rewrite (see needsTextRewrite below) — those bytes never
+    // cross the data channel decompressed for anything that doesn't need
+    // real text, so a compressed upstream response means fewer data-channel
+    // bytes, with the browser decompressing natively exactly as it would
+    // for a normal network response.
+    if (!headers['accept-encoding'] && !headers['Accept-Encoding']) headers['accept-encoding'] = ACCEPT_ENCODING
+    const req = httpMod.request(upstreamUrl, { method: head.method, headers, agent }, (res) => {
       ;(async () => {
+        const contentType = res.headers['content-type'] || ''
+        const rewrite = needsTextRewrite(contentType)
         await sendFrame(session, peerPubkey, FRAME.RES_HEAD, id, {
           status: res.statusCode,
           statusText: res.statusMessage || '',
-          headers: pickHeaders(res.headers, STRIP_RESPONSE_HEADERS)
+          headers: pickHeaders(res.headers, rewrite ? STRIP_RESPONSE_HEADERS : RESPONSE_HEADERS_KEEP_ENCODING)
         })
         try {
-          for await (const chunk of decompressed(res)) {
-            await sendFrame(session, peerPubkey, FRAME.RES_BODY, id, chunk)
+          // Only html/css need real decompressed text (rewriteHtml/
+          // rewriteCss in web/src/rewrite.js rewrite URLs inline) — for
+          // anything else, relay the original bytes (and Content-Encoding
+          // header, above) as-is rather than decompressing server-side and
+          // sending the larger plaintext form over the data channel.
+          const body = rewrite ? decompressed(res) : res
+          for await (const chunk of body) {
+            for (let i = 0; i < chunk.length; i += MAX_CHUNK) {
+              await sendFrame(session, peerPubkey, FRAME.RES_BODY, id, chunk.subarray(i, Math.min(i + MAX_CHUNK, chunk.length)))
+            }
           }
           await sendFrame(session, peerPubkey, FRAME.RES_BODY, id, new Uint8Array(0))
         } catch (err) {
@@ -140,7 +182,12 @@ function makeTunnelRouter(session, { target, onLog }) {
     if (!pending) return
     if (!chunk || chunk.length === 0) {
       state.pendingReqs.delete(id)
-      dispatchHttp(peerPubkey, id, pending.head, Buffer.concat(pending.chunks.map((c) => Buffer.from(c))))
+      // Buffer.concat accepts Uint8Array elements directly (each is copied
+      // into the final buffer via .set() regardless of whether it's a
+      // Buffer) — the previous .map((c) => Buffer.from(c)) copied every
+      // chunk once for that alone, on top of Buffer.concat's own copy, i.e.
+      // every uploaded byte was copied twice for no reason.
+      dispatchHttp(peerPubkey, id, pending.head, Buffer.concat(pending.chunks))
       return
     }
     pending.chunks.push(chunk)
@@ -214,6 +261,7 @@ function makeTunnelRouter(session, { target, onLog }) {
 
   function closeAll() {
     for (const peerPubkey of Array.from(peerState.keys())) closePeer(peerPubkey)
+    agent.destroy()
   }
 
   return { handleFrame, closePeer, closeAll, targetHost: targetUrl.host }

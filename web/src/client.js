@@ -39,10 +39,17 @@ function waitForDrain(dc) {
   if (!dc || dc.bufferedAmount <= BUFFERED_AMOUNT_HIGH) return Promise.resolve()
   return new Promise((resolve) => {
     let done = false
-    const finish = () => { if (done) return; done = true; dc.removeEventListener('bufferedamountlow', finish); resolve() }
+    let timer = null
+    const finish = () => {
+      if (done) return
+      done = true
+      if (timer !== null) clearTimeout(timer)
+      dc.removeEventListener('bufferedamountlow', finish)
+      resolve()
+    }
     dc.bufferedAmountLowThreshold = Math.floor(BUFFERED_AMOUNT_HIGH / 2)
     dc.addEventListener('bufferedamountlow', finish)
-    setTimeout(finish, 250)
+    timer = setTimeout(finish, 250)
   })
 }
 
@@ -173,8 +180,16 @@ async function main(password) {
           port.postMessage({ type: 'end' })
           pendingFetches.delete(frame.id)
         } else {
-          const buf = frame.payload.slice().buffer
-          port.postMessage({ type: 'body', chunk: buf }, [buf])
+          // Transfer the ORIGINAL received buffer (the whole RTC message,
+          // header bytes included) plus the payload's byteOffset/byteLength
+          // instead of frame.payload.slice() — slicing would copy the
+          // payload into a fresh buffer before every single transfer, once
+          // per downloaded chunk of every response. Transferring the
+          // original buffer moves ownership with zero copy; the few extra
+          // (5) header bytes tag along unused, which costs nothing (sw.js's
+          // consumer views only [byteOffset, byteOffset+byteLength)).
+          const { buffer, byteOffset, byteLength } = frame.payload
+          port.postMessage({ type: 'body', chunk: buffer, byteOffset, byteLength }, [buffer])
         }
       } else {
         port.postMessage({ type: 'error', message: frame.payload.message })
