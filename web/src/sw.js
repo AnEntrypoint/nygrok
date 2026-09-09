@@ -97,12 +97,22 @@ function isTextType(contentType) {
 // particular) as an array; the Headers constructor can't take array values
 // directly, so build it by hand, appending each so multiple Set-Cookie
 // headers survive instead of getting silently merged into one.
+//
+// Forces Cache-Control: no-store on every response regardless of what the
+// upstream sent, redirects included. Confirmed by hand: Chrome caches a 3xx
+// Location answer for a given URL independent of the service worker, so a
+// redirect target computed while the rewrite was buggy (or before a peer
+// with a different targetHost connected) stays wrong forever for that exact
+// URL until the browser's HTTP cache is cleared — no-store prevents that
+// class of bug from ever getting a chance to stick.
 function toHeaders(obj) {
   const h = new Headers()
   for (const [k, v] of Object.entries(obj || {})) {
+    if (k.toLowerCase() === 'cache-control' || k.toLowerCase() === 'expires') continue
     if (Array.isArray(v)) for (const vv of v) h.append(k, vv)
     else if (v != null) h.append(k, String(v))
   }
+  h.set('cache-control', 'no-store')
   return h
 }
 
@@ -159,18 +169,7 @@ async function proxyFetch(match, request) {
   // entirely. Same rewrite rules as HTML/CSS URLs, applied to every response
   // (not just text ones), since a redirect can point at any resource type.
   if (rawResponse.headers.location) {
-    const rewrittenLocation = rewriteUrl(rawResponse.headers.location, { prefix: match.prefix, targetHost: bridge.targetHost })
-    if (new URL(request.url).searchParams.has('__nygrok_debug_redirect')) {
-      return new Response(JSON.stringify({
-        status: rawResponse.status,
-        originalLocation: rawResponse.headers.location,
-        rewrittenLocation,
-        prefix: match.prefix,
-        targetHost: bridge.targetHost,
-        headerKeys: Object.keys(rawResponse.headers)
-      }), { status: 200, headers: { 'content-type': 'application/json' } })
-    }
-    rawResponse.headers = { ...rawResponse.headers, location: rewrittenLocation }
+    rawResponse.headers = { ...rawResponse.headers, location: rewriteUrl(rawResponse.headers.location, { prefix: match.prefix, targetHost: bridge.targetHost }) }
   }
 
   const contentType = rawResponse.headers['content-type'] || ''
