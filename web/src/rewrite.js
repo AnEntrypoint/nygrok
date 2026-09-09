@@ -54,9 +54,43 @@ function rewriteAbsoluteOrigins(text, { prefix, targetHost, pageOrigin }) {
   })
 }
 
+const IMPORTMAP_RE = /(<script[^>]*\btype\s*=\s*["']importmap["'][^>]*>)([\s\S]*?)(<\/script>)/i
+
+// Import maps declare bare-specifier -> URL mappings as raw JSON, not
+// href/src attributes, so the browser's own module resolver reads them
+// directly — ATTR_RE above never sees them. A root-relative or
+// tunnel-target-absolute entry left unrewritten sends every `import
+// '<bare-specifier>'` straight to the proxy's domain root instead of back
+// through the /t/<seed>/ prefix.
+function rewriteImportMap(html, opts) {
+  return html.replace(IMPORTMAP_RE, (m, openTag, json, closeTag) => {
+    let map
+    try {
+      map = JSON.parse(json)
+    } catch {
+      return m
+    }
+    const rewriteValues = (obj) => {
+      if (!obj) return
+      for (const k of Object.keys(obj)) obj[k] = rewriteUrl(obj[k], opts)
+    }
+    rewriteValues(map.imports)
+    if (map.scopes) {
+      const rewrittenScopes = {}
+      for (const scopeKey of Object.keys(map.scopes)) {
+        rewriteValues(map.scopes[scopeKey])
+        rewrittenScopes[rewriteUrl(scopeKey, opts)] = map.scopes[scopeKey]
+      }
+      map.scopes = rewrittenScopes
+    }
+    return openTag + JSON.stringify(map) + closeTag
+  })
+}
+
 export function rewriteHtml(html, opts) {
   const { prefix } = opts
-  let out = html.replace(ATTR_RE, (m, attr, eq, q, path) => `${attr}${eq}${q}${prefixPath(path, prefix)}${q}`)
+  let out = rewriteImportMap(html, opts)
+  out = out.replace(ATTR_RE, (m, attr, eq, q, path) => `${attr}${eq}${q}${prefixPath(path, prefix)}${q}`)
   out = out.replace(SRCSET_RE, (m, eq, q, value) => {
     const rewritten = value
       .split(',')
