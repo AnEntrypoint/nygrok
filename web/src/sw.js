@@ -42,7 +42,18 @@ self.addEventListener('message', (event) => {
 })
 
 async function waitForBridge(seed, timeoutMs) {
-  if (bridges.has(seed)) return bridges.get(seed)
+  // A cached entry isn't enough on its own: with a reusable seed (`--key`),
+  // an earlier tab's bridge can still be sitting in `bridges` after that tab
+  // closed — the service worker is long-lived across tabs/reloads and
+  // nothing proactively evicts a dead entry. Confirm the client is actually
+  // still there before trusting it; otherwise fall through to rediscovery
+  // exactly as if the seed were never seen.
+  const existing = bridges.get(seed)
+  if (existing) {
+    const client = await self.clients.get(existing.clientId)
+    if (client) return existing
+    bridges.delete(seed)
+  }
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
   for (const c of clients) c.postMessage({ type: 'nygrok-who-has', seed })
   await new Promise((resolve) => {
