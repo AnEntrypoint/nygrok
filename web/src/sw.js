@@ -82,11 +82,43 @@ function matchTunnel(url) {
   return { seed, upstreamPath, prefix: prefixBase + seed }
 }
 
+// A dynamic `import()` with a hardcoded absolute path (e.g. a plugin
+// loader doing `import('/plugins/foo/client.js')`) can never be caught by
+// rewriteHtml/rewriteCss or the injected fetch/XHR/WebSocket shim — none of
+// those run for the browser's native module resolver. If the service
+// worker's own scope is the origin root (see README: only achievable when
+// nygrok is hosted at a domain/org root, not a GitHub Pages project
+// subpage, since there's no way to send a Service-Worker-Allowed header on
+// a project page), such a request still reaches this fetch handler; it just
+// won't match matchTunnel()'s /t/<seed>/ prefix. Recover the seed from the
+// requesting document's own (prefixed) location instead of the URL.
+async function resolveSeedForClient(clientId) {
+  if (!clientId) return null
+  const client = await self.clients.get(clientId)
+  if (!client) return null
+  try {
+    const u = new URL(client.url)
+    const m = /^\/t\/([^/]+)/.exec(u.pathname.slice(scopePath().length - 1))
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
   const match = matchTunnel(url)
-  if (!match) return
-  event.respondWith(proxyFetch(match, event.request))
+  if (match) {
+    event.respondWith(proxyFetch(match, event.request))
+    return
+  }
+  if (url.origin !== self.location.origin || !url.pathname.startsWith(scopePath())) return
+  event.respondWith((async () => {
+    const seed = await resolveSeedForClient(event.clientId || event.resultingClientId)
+    if (!seed) return fetch(event.request)
+    const fallbackMatch = { seed, upstreamPath: url.pathname + url.search, prefix: scopePath() + 't/' + seed }
+    return proxyFetch(fallbackMatch, event.request)
+  })())
 })
 
 function isTextType(contentType) {

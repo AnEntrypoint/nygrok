@@ -16,7 +16,7 @@ Target:  http://localhost:3000
 
 Give this link to anyone who should be able to view it:
 
-  https://anentrypoint.github.io/nygrok/#a1b2c3...
+  https://anentrypoint.github.io/#a1b2c3...
 
 Whoever opens it browses your local site straight from their
 browser — no install, no public port. Ctrl+C to stop sharing.
@@ -86,10 +86,24 @@ it) WebRTC connection straight to your machine. That means:
 
 The proxy lives at a path prefix (`/t/<seed>/`), not the domain root, so
 `rewrite.js` also does best-effort rewriting of root-relative and
-tunnel-origin-absolute URLs — both statically in served HTML/CSS and at
-runtime via an injected shim that patches `fetch`/`XHR`/`WebSocket` in the
-tunneled page — so they resolve back through the prefix instead of escaping
-it. See "Known limitations" below for what this can't catch.
+tunnel-origin-absolute URLs — in served HTML/CSS attributes, `<script
+type="importmap">` entries, redirect `Location` headers, and at runtime via
+an injected shim that patches `fetch`/`XHR`/`WebSocket` in the tunneled
+page — so they resolve back through the prefix instead of escaping it.
+
+One class of request slips past all of that: a dynamic `import()` with a
+hardcoded absolute path (some plugin-loader systems do this) is never
+routed through `fetch`/`XHR`, so no shim can catch it — only the service
+worker's `fetch` event can, and only if the request falls inside its scope.
+A service worker's scope is capped at the directory it's served from, and
+GitHub Pages gives no way to widen that for a project page (no custom
+response headers, so `Service-Worker-Allowed` isn't achievable). That's why
+the hosted client lives at **`https://anentrypoint.github.io/`** (an org
+root Pages site, [`AnEntrypoint/AnEntrypoint.github.io`](https://github.com/AnEntrypoint/AnEntrypoint.github.io))
+rather than a `/nygrok/` project page — root scope means the service worker
+sees these requests too. When one arrives without the `/t/<seed>/` prefix,
+`sw.js` recovers the seed from the requesting document's own (still
+prefixed) location instead of the URL, then proxies it the same way.
 
 ## Usage
 
@@ -141,11 +155,15 @@ This is a best-effort browser-side reverse proxy, not a guarantee for every
 possible app — the same honest caveat any service-worker-based proxy has:
 
 - **URL rewriting is regex/attribute-based, not a full HTML/CSS/JS parser.**
-  It catches `href`/`src`/`action`/`srcset` attributes, CSS `url()`, and
-  JS-initiated `fetch`/`XHR`/`WebSocket` calls with root-relative or
-  tunnel-origin-absolute URLs. A site that constructs URLs in unusual ways
-  (e.g. string-concatenating a hostname deep inside a minified bundle) may
-  not render correctly.
+  It catches `href`/`src`/`action`/`srcset` attributes, CSS `url()`, import
+  map entries, redirect `Location` headers, and JS-initiated
+  `fetch`/`XHR`/`WebSocket` calls with root-relative or tunnel-origin-
+  absolute URLs — plus, since the hosted client runs at root scope, a
+  same-origin request that skips all of that (a hardcoded-absolute-path
+  dynamic `import()`) still gets caught and resolved via the requesting
+  document's own location. A site that constructs URLs in truly unusual ways
+  (e.g. string-concatenating a hostname deep inside a minified bundle, then
+  posting it to a *different* origin) may still not render correctly.
 - **No public plain-HTTP URL.** curl, webhooks, and bots can't reach a
   tunnel — only a WebRTC-capable browser that opens the actual invite link.
   This is deliberate (see "Why this is different from ngrok" above), not a

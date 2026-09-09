@@ -34,7 +34,13 @@ export async function runServer(opts = {}) {
     onLog: (msg) => console.log('nygrok: ' + msg)
   })
 
-  const webBase = opts.webBase || 'https://anentrypoint.github.io/nygrok/'
+  // Root, not the /nygrok/ project page: a service worker's scope is capped
+  // at the directory it's served from, and GitHub Pages gives no way to
+  // widen that (no custom response headers, so Service-Worker-Allowed isn't
+  // achievable) — some real apps dynamically import() plugins/chunks by
+  // absolute root path, which only a root-scoped worker can intercept. See
+  // https://github.com/AnEntrypoint/AnEntrypoint.github.io.
+  const webBase = opts.webBase || 'https://anentrypoint.github.io/'
   const inviteUrl = `${webBase}#${seed}`
 
   console.log('')
