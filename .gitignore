@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+web/bundle.js
+web/bundle.js.map
+web/sw.js
+web/sw.js.map
+*.swp
+*.stackdump

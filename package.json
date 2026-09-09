@@ -1,0 +1,48 @@
+{
+  "name": "nygrok",
+  "version": "0.1.0",
+  "description": "P2P localhost tunnel, viewed straight from a browser page over WebRTC. No servers, no ports, no account — sharesies for HTTP.",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "bin": {
+    "nygrok": "nygrok.mjs"
+  },
+  "files": [
+    "nygrok.mjs",
+    "index.js",
+    "src/*.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node nygrok.mjs",
+    "test": "node --test",
+    "build:web": "node web/build.mjs",
+    "dev:web": "node web/build.mjs --watch"
+  },
+  "keywords": [
+    "ngrok",
+    "tunnel",
+    "webrtc",
+    "p2p",
+    "localhost",
+    "holepunch",
+    "service-worker",
+    "reverse-proxy"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "node-datachannel": "^0.32.3",
+    "nostr-tools": "^2.23.9",
+    "wireweave": "^0.3.61",
+    "ws": "^8.21.0",
+    "xstate": "^5.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
