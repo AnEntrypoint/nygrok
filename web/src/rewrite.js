@@ -27,6 +27,23 @@ function prefixPath(path, prefix) {
   return prefix.replace(/\/$/, '') + path
 }
 
+// Rewrites a single URL (as opposed to rewriteHtml/rewriteCss, which rewrite
+// URLs embedded in a larger text blob) — for response headers like
+// `Location` on a redirect, which point at the tunnel target's own origin
+// and would otherwise send the browser to our proxy's domain root instead
+// of back through the `/t/<seed>/` prefix.
+export function rewriteUrl(rawUrl, { prefix, targetHost }) {
+  if (!rawUrl) return rawUrl
+  if (rawUrl[0] === '/' && rawUrl[1] !== '/') return prefixPath(rawUrl, prefix)
+  if (targetHost) {
+    try {
+      const u = new URL(rawUrl)
+      if (u.host === targetHost) return prefixPath(u.pathname + u.search + u.hash, prefix)
+    } catch {}
+  }
+  return rawUrl
+}
+
 function rewriteAbsoluteOrigins(text, { prefix, targetHost, pageOrigin }) {
   if (!targetHost) return text
   const re = new RegExp('(https?|wss?):(//)' + escapeRegExp(targetHost) + '(/[^"\'\\s)>]*)?', 'gi')

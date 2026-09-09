@@ -63,6 +63,18 @@ function pickHeaders(headers, strip) {
   return out
 }
 
+// AggregateError (Node's Happy-Eyeballs dual-stack connect, or similar)
+// hides the actually-useful detail inside `.errors` — surface those too,
+// not just the outer "AggregateError" message.
+function describeRequestError(method, upstreamUrl, err) {
+  const base = `upstream request failed: ${method} ${upstreamUrl} — ${err?.code || err?.name || 'Error'}: ${err?.message || err}`
+  if (Array.isArray(err?.errors) && err.errors.length) {
+    const nested = err.errors.map((e) => `${e?.code || e?.name || 'Error'}: ${e?.message || e}`).join('; ')
+    return `${base} [${nested}]`
+  }
+  return base
+}
+
 function decompressed(res) {
   const enc = String(res.headers['content-encoding'] || '').toLowerCase()
   if (enc === 'gzip' || enc === 'x-gzip') return res.pipe(zlib.createGunzip())
@@ -112,6 +124,7 @@ function makeTunnelRouter(session, { target, onLog }) {
       })().catch(() => {})
     })
     req.on('error', (err) => {
+      onLog?.(describeRequestError(head.method, upstreamUrl, err))
       sendFrame(session, peerPubkey, FRAME.RES_ERROR, id, { message: String(err?.message || err) }).catch(() => {})
     })
     req.end(bodyBuf && bodyBuf.length ? bodyBuf : undefined)

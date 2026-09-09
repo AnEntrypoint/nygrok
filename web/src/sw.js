@@ -8,7 +8,7 @@
 // sw.js, favicons, ...) is left to the network exactly as a normal page load
 // would be — this worker only ever intercepts tunnel traffic.
 
-import { rewriteHtml, rewriteCss } from './rewrite.js'
+import { rewriteHtml, rewriteCss, rewriteUrl } from './rewrite.js'
 
 self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
@@ -150,6 +150,16 @@ async function proxyFetch(match, request) {
 
   if (rawResponse.error) {
     return new Response('nygrok: ' + rawResponse.error, { status: 502, headers: { 'content-type': 'text/plain' } })
+  }
+
+  // A redirect's Location points at the tunnel target's own origin (e.g. a
+  // static-file server 301ing "client.js" -> "client/index.js") — left
+  // unrewritten, the browser would follow it straight to our proxy's domain
+  // root instead of back through the /t/<seed>/ prefix, escaping the tunnel
+  // entirely. Same rewrite rules as HTML/CSS URLs, applied to every response
+  // (not just text ones), since a redirect can point at any resource type.
+  if (rawResponse.headers.location) {
+    rawResponse.headers = { ...rawResponse.headers, location: rewriteUrl(rawResponse.headers.location, { prefix: match.prefix, targetHost: bridge.targetHost }) }
   }
 
   const contentType = rawResponse.headers['content-type'] || ''
