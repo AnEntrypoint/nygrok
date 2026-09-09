@@ -17,8 +17,12 @@ function createMemoryStorage() {
   }
 }
 
-export async function deriveRoomFromSeed(seed) {
-  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('nygrok:' + String(seed)))
+// Mirrors src/rtc-node.js's deriveRoomFromSeed exactly — see its comment for
+// why an optional password changes the room id instead of gating access some
+// other way.
+export async function deriveRoomFromSeed(seed, password = '') {
+  const input = password ? `nygrok:${String(seed)}|pw:${String(password)}` : `nygrok:${String(seed)}`
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
   return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32)
 }
 

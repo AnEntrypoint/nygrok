@@ -9,10 +9,24 @@
   #status { display: flex; align-items: center; justify-content: center; height: 100%; padding: 2rem; text-align: center; }
   #status.error { color: #ff8080; }
   #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  #gate { display: flex; align-items: center; justify-content: center; height: 100%; padding: 2rem; }
+  #gate form { display: flex; flex-direction: column; gap: 0.75rem; width: 100%; max-width: 20rem; }
+  #gate input { background: #171d26; border: 1px solid #2a3341; color: inherit; border-radius: 6px; padding: 0.6rem 0.75rem; font: inherit; }
+  #gate input:focus { outline: 2px solid #3b82f6; outline-offset: 1px; }
+  #gate button { background: #3b82f6; border: 0; color: #fff; border-radius: 6px; padding: 0.6rem 0.75rem; font: inherit; cursor: pointer; }
+  #gate button:hover { background: #2f6fd8; }
+  #gate p { margin: 0 0 0.25rem; color: #9aa7b8; font-size: 0.85rem; }
 </style>
 </head>
 <body>
-  <div id="status">connecting…</div>
+  <div id="gate">
+    <form id="gate-form">
+      <p>If the host set a password for this tunnel, enter it below. Leave blank otherwise.</p>
+      <input id="gate-password" type="password" autocomplete="off" placeholder="Password (if any)" />
+      <button type="submit">Connect</button>
+    </form>
+  </div>
+  <div id="status" hidden>connecting…</div>
   <iframe id="frame" hidden title="tunneled site"></iframe>
   <script type="module" src="./bundle.js"></script>
 </body>

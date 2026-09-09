@@ -49,6 +49,11 @@ it) WebRTC connection straight to your machine. That means:
   apps that accept it, interact with — whatever's on that port. Treat it
   like a password; don't log or commit it. `--key <seed>` gives a stable,
   reusable one instead of a fresh random seed each run.
+- **An optional second password, never in the link.** `--password <pw>`
+  mixes a password into the room id itself, so the link alone (all that's
+  ever in the URL — the password never is) stops being sufficient; whoever
+  connects also needs the password, given separately, entered into the page
+  before it connects at all. See "Password protection" below.
 - **Nothing persists anywhere.** No account, no server logs your traffic —
   it never passes through a third party at all (beyond WebRTC's own STUN/TURN
   infrastructure for NAT traversal, which only ever sees encrypted DTLS
@@ -112,6 +117,24 @@ npx github:AnEntrypoint/nygrok 3000                  # tunnel http://localhost:3
 npx github:AnEntrypoint/nygrok http://localhost:3000  # equivalent
 npx github:AnEntrypoint/nygrok --key my-seed 3000     # stable invite link across restarts
 ```
+
+### Password protection
+
+```bash
+npx nygrok --password hunter2 3000
+```
+
+The invite link alone is no longer enough — the page shows a small
+password prompt before it attempts to connect at all, and a wrong or
+missing password just never finds a peer (the room id is derived from
+`seed + password` together, so anyone without the right password can't
+even compute which room to look in — not a distinguishable "wrong
+password" error, since there's nothing to probe against). Give the link
+and the password through different channels; putting both in the same
+message defeats the point.
+
+`--pw` is a shorthand for `--password`. Combine with `--key <seed>` for a
+stable link + password pair you can reuse across restarts.
 
 ### NAT-traversal tuning
 

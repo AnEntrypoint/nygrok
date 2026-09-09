@@ -17,6 +17,9 @@ import { FRAME, encodeFrame, decodeFrame, chunkBody } from '../../src/tunnel-pro
 
 const statusEl = document.getElementById('status')
 const frameEl = document.getElementById('frame')
+const gateEl = document.getElementById('gate')
+const gateFormEl = document.getElementById('gate-form')
+const gatePasswordEl = document.getElementById('gate-password')
 
 function setStatus(text, isError) {
   if (!statusEl) return
@@ -43,7 +46,7 @@ function waitForDrain(dc) {
   })
 }
 
-async function main() {
+async function main(password) {
   setStatus('registering local proxy…')
   const reg = await navigator.serviceWorker.register('./sw.js')
   await navigator.serviceWorker.ready
@@ -95,7 +98,11 @@ async function main() {
 
   setStatus('connecting to host…')
   const { session, relayPool } = createRtcTransport({ namespace: 'nygrok' })
-  const roomId = await deriveRoomFromSeed(seed)
+  // A wrong (or missing, when one is required) password derives a different
+  // room id than the host's — the connection just never finds a peer here,
+  // rather than failing with any distinguishing error. That's deliberate:
+  // see rtc-node.js's deriveRoomFromSeed comment.
+  const roomId = await deriveRoomFromSeed(seed, password)
 
   let hostPubkey = null
   let dataChannelOpen = false
@@ -208,7 +215,14 @@ async function main() {
   })
 }
 
-main().catch((err) => {
-  console.error(err)
-  setStatus('nygrok failed to start: ' + (err && err.message ? err.message : err), true)
+gateFormEl.addEventListener('submit', (e) => {
+  e.preventDefault()
+  const password = gatePasswordEl.value
+  gatePasswordEl.value = ''
+  if (gateEl) gateEl.hidden = true
+  if (statusEl) statusEl.hidden = false
+  main(password).catch((err) => {
+    console.error(err)
+    setStatus('nygrok failed to start: ' + (err && err.message ? err.message : err), true)
+  })
 })

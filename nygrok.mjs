@@ -8,6 +8,10 @@ USAGE:
   npx github:AnEntrypoint/nygrok <port>              Tunnel http://localhost:<port>
   npx github:AnEntrypoint/nygrok http://localhost:3000
   npx github:AnEntrypoint/nygrok --key <seed> 3000   Fixed seed -> stable invite link
+  npx github:AnEntrypoint/nygrok --password <pw> 3000
+                                     Require a password (given separately,
+                                     never in the link) before the page will
+                                     connect at all
 
 WEBRTC NAT-TRAVERSAL TUNING:
   --rtc-port-range <begin>-<end>    Pin ICE to a fixed UDP port range
@@ -52,7 +56,7 @@ function parsePortRange(input) {
 
 function parseArgs(argv) {
   const out = {
-    key: null, webBase: null,
+    key: null, webBase: null, password: null,
     rtcPortRangeBegin: undefined, rtcPortRangeEnd: undefined, rtcUdpMux: false, rtcProxy: undefined,
     positionals: [], help: false
   }
@@ -60,6 +64,7 @@ function parseArgs(argv) {
     const a = argv[i]
     if (a === '--help' || a === '-h') out.help = true
     else if (a === '--key') out.key = argv[++i]
+    else if (a === '--password' || a === '--pw') out.password = argv[++i]
     else if (a === '--web-base') out.webBase = argv[++i]
     else if (a === '--rtc-port-range') { const r = parsePortRange(argv[++i]); out.rtcPortRangeBegin = r.begin; out.rtcPortRangeEnd = r.end }
     else if (a === '--rtc-udp-mux') out.rtcUdpMux = true
@@ -91,6 +96,7 @@ async function main() {
   return await runServer({
     seed: args.key || undefined,
     target,
+    password: args.password || undefined,
     webBase: args.webBase || undefined,
     rtcPortRangeBegin: args.rtcPortRangeBegin,
     rtcPortRangeEnd: args.rtcPortRangeEnd,

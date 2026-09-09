@@ -20,9 +20,12 @@ export async function runServer(opts = {}) {
   const target = normalizeTarget(String(opts.target))
   const seed = opts.seed || randomSeed()
 
+  const password = opts.password || ''
+
   const rtc = await attachTunnelTransport({
     seed,
     target,
+    password,
     portRangeBegin: opts.rtcPortRangeBegin,
     portRangeEnd: opts.rtcPortRangeEnd,
     proxy: opts.rtcProxy,
@@ -52,6 +55,12 @@ export async function runServer(opts = {}) {
   console.log('')
   console.log('  ' + inviteUrl)
   console.log('')
+  if (password) {
+    console.log('This tunnel is password-protected. Give the password separately —')
+    console.log('never in the same message as the link — the page will ask for it')
+    console.log('before connecting, and the link alone cannot reach this tunnel.')
+    console.log('')
+  }
   console.log('Whoever opens it browses your local site straight from their')
   console.log('browser — no install, no public port. Ctrl+C to stop sharing.')
   console.log('')
@@ -67,5 +76,5 @@ export async function runServer(opts = {}) {
   process.on('SIGINT', () => shutdown(130))
   process.on('SIGTERM', () => shutdown(143))
 
-  return { rtc, seed, target, inviteUrl, shutdown }
+  return { rtc, seed, target, password, inviteUrl, shutdown }
 }

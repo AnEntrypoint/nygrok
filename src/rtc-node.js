@@ -41,11 +41,18 @@ export function createMemoryStorage() {
   }
 }
 
-// The HyperDHT transport derives a keypair from sha256(seed). The RTC
-// transport derives a room id the same deterministic way, so one shared
-// seed string is a single invite for both transports at once.
-export function deriveRoomFromSeed(seed) {
-  return createHash('sha256').update('nygrok:' + String(seed)).digest('hex').slice(0, 32)
+// The room id is a plain sha256(seed) by default — the invite link's #<seed>
+// fragment is the only secret needed to compute it. Passing a non-empty
+// password mixes it into that hash instead: the link alone (which is all
+// that's ever embedded in the URL — the password never is) no longer
+// determines the room, so it's useless without the password too, given
+// separately. Without it there is literally nothing to guess against — a
+// nostr room id is a full SHA-256 hash, not enumerable — so "wrong or no
+// password" and "right seed, no password set" look identical from outside:
+// the connection just never finds a peer, no distinguishing error to probe.
+export function deriveRoomFromSeed(seed, password = '') {
+  const input = password ? `nygrok:${String(seed)}|pw:${String(password)}` : `nygrok:${String(seed)}`
+  return createHash('sha256').update(input).digest('hex').slice(0, 32)
 }
 
 // Builds a createPeerConnection factory that constructs node-datachannel's

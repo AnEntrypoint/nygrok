@@ -254,10 +254,10 @@ export function wireTunnelTransport(session, { target, onPeerOpen, onLog } = {})
 // Joins the WebRTC room derived from `seed` and starts relaying every
 // connected browser peer's HTTP/WS traffic to `target` (e.g.
 // "http://localhost:3000").
-export async function attachTunnelTransport({ seed, target, namespace = 'nygrok', portRangeBegin, portRangeEnd, proxy, udpMux, onPeerConnected, onLog } = {}) {
+export async function attachTunnelTransport({ seed, target, password = '', namespace = 'nygrok', portRangeBegin, portRangeEnd, proxy, udpMux, onPeerConnected, onLog } = {}) {
   if (!target) throw new Error('attachTunnelTransport requires target — the local URL to tunnel')
   const { session, relayPool, auth } = await createRtcTransport({ namespace, portRangeBegin, portRangeEnd, proxy, udpMux })
-  const roomId = deriveRoomFromSeed(seed)
+  const roomId = deriveRoomFromSeed(seed, password)
   const transport = wireTunnelTransport(session, {
     target,
     onLog,
