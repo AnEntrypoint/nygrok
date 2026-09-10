@@ -1,12 +1,19 @@
 # nygrok
 
-A peer-to-peer localhost tunnel, viewed straight from a browser page over
-WebRTC — no ports opened, no relay server to run, no account. Sibling
-project to [sharesies](https://github.com/AnEntrypoint/sharesies) (shared
-terminals): same zero-server transport, applied to HTTP instead of a PTY.
+**Share your localhost. Skip the server.**
+
+nygrok is a peer-to-peer tunnel for anything running on your machine — point
+it at a port, get a link, hand the link to a friend. They open it in a
+regular browser tab and see your app live, no install on their end. Under
+the hood it's a `RTCDataChannel` straight to your machine, not a cloud
+relay — the browser tab *is* the tunnel. Sibling project to
+[sharesies](https://github.com/AnEntrypoint/sharesies) (shared terminals):
+same zero-server transport, aimed at HTTP instead of a PTY.
+
+## 30-second start
 
 ```bash
-npx nygrok 3000
+npx github:AnEntrypoint/nygrok 3000
 ```
 
 ```
@@ -22,44 +29,51 @@ Whoever opens it browses your local site straight from their
 browser — no install, no public port. Ctrl+C to stop sharing.
 ```
 
-Send that link to a friend. They open it in a normal browser tab — no
-install — and it renders whatever's running on your local port, live,
-straight from their browser. Nothing is uploaded anywhere; the two browsers
-(or your CLI and their browser) talk directly over a WebRTC data channel,
-signaled peer-to-peer over public [nostr](https://nostr.com) relays.
+That's it. Send the link. They open it, their browser negotiates a direct
+(or TURN-relayed, if NAT is being difficult) WebRTC connection to your
+machine, and your site just... shows up for them. Nothing gets uploaded to
+a server anywhere — the two of you are talking directly, peer to peer,
+found each other via public [nostr](https://nostr.com) relays acting as a
+signaling handshake.
 
 ---
 
-## Why this is different from ngrok
+## Why not just use ngrok?
 
-ngrok gives you a real public URL that *anyone* — curl, webhooks, bots, a
-browser with no special software — can hit. That requires a company's cloud
-relay terminating real HTTP traffic on a public IP.
+Because sometimes you don't want a public URL at all.
 
-nygrok has no relay and no account. What it gives you instead: the seed in
-the invite link *is* the connection — whoever has it opens the nygrok page,
-and their browser negotiates a direct (or TURN-relayed, when NAT requires
-it) WebRTC connection straight to your machine. That means:
+ngrok gives you a real internet-facing endpoint — curl can hit it, webhooks
+can hit it, so can bots scanning the whole internet for open endpoints.
+That's the point of ngrok, and it needs a company's cloud relay to pull
+off.
 
-- **No public HTTP endpoint.** Only a browser that opens the actual invite
-  link can reach your site — not curl, not a webhook sender, not a bot.
-  This is a deliberate scope choice (see `../sharesies`'s same trade-off for
-  terminal sharing), not a missing feature.
-- **The seed is the password.** Anyone with the link can view — and, for
-  apps that accept it, interact with — whatever's on that port. Treat it
-  like a password; don't log or commit it. `--key <seed>` gives a stable,
-  reusable one instead of a fresh random seed each run.
-- **An optional second password, never in the link.** `--password <pw>`
-  mixes a password into the room id itself, so the link alone (all that's
-  ever in the URL — the password never is) stops being sufficient; whoever
-  connects also needs the password, given separately, entered into the page
-  before it connects at all. See "Password protection" below.
-- **Nothing persists anywhere.** No account, no server logs your traffic —
-  it never passes through a third party at all (beyond WebRTC's own STUN/TURN
-  infrastructure for NAT traversal, which only ever sees encrypted DTLS
-  bytes, and the nostr relays used purely for connection signaling).
+nygrok makes a different trade: **no public endpoint exists, period.** The
+only way in is through the exact link you handed out, opened in an actual
+WebRTC-capable browser.
 
-## How it works
+| | ngrok | nygrok |
+|---|---|---|
+| Reachable by | anyone/anything with the URL (curl, bots, webhooks) | only a browser opening your exact invite link |
+| Runs through | a cloud relay | nothing — direct P2P |
+| Needs an account | yes | no |
+| Traffic visibility | passes through ngrok's servers | never leaves WebRTC's encrypted channel |
+
+A few things fall out of that trade:
+
+- **The seed *is* the access control.** Whoever holds the link can view
+  (and interact with, if the app allows it) whatever's on that port —
+  treat the link like a password. `--key <seed>` gives you a stable,
+  reusable one instead of a fresh random seed every run.
+- **Optional second password, never in the link.** `--password <pw>` folds
+  a password into the room id itself, so the link alone stops being enough
+  — whoever connects also needs the password, entered into the page before
+  it even tries to connect. See below.
+- **Nothing to leak.** No account, no logs on a server somewhere — the
+  only third parties involved are WebRTC's own STUN/TURN infrastructure
+  (sees encrypted bytes only) and the nostr relays used purely to say "hey,
+  I'm here" during signaling.
+
+## How it actually works
 
 ```
 [localhost:PORT] <--http/ws--> [nygrok host] <==WebRTC==> [viewer's browser]
@@ -69,46 +83,44 @@ it) WebRTC connection straight to your machine. That means:
                                                      shim, both same-origin
 ```
 
-1. `npx nygrok <port>` derives a WebRTC room id from a seed
-   (`sha256('nygrok:' + seed)`) and joins it, the same way sharesies derives
-   its HyperDHT keypair — see `src/rtc-node.js` (copied from sharesies
-   unmodified; it's already transport-agnostic).
-2. The invite link's `#<seed>` fragment tells the browser page which room to
-   join. Once its `RTCDataChannel` is open, it registers a **service
-   worker** scoped to the page and loads the tunneled site in an iframe
-   under a per-seed path (`/t/<seed>/`).
-3. Every resource request the browser makes under that path — HTML, CSS,
-   JS, images, `fetch`/XHR calls — is intercepted by the service worker,
-   turned into a `REQ_HEAD`/`REQ_BODY` frame sent over the data channel (see
-   `src/tunnel-protocol.js`), answered by a real HTTP request the host makes
-   against your local server, and streamed back as `RES_HEAD`/`RES_BODY`
-   frames the service worker turns into a real `Response`.
-4. `WebSocket` connections get the same treatment via a small virtual
-   `WebSocket` object (service workers can't intercept the WS upgrade
-   itself, so this part is a JS-level replacement — see
-   `web/src/rewrite.js`), relaying `WS_OPEN`/`WS_MSG`/`WS_CLOSE` frames
-   against a real WebSocket the host opens to your local server.
+1. `npx github:AnEntrypoint/nygrok <port>` turns your seed into a WebRTC room id
+   (`sha256('nygrok:' + seed)`) and joins it — same trick sharesies uses
+   for its HyperDHT keypair. See `src/rtc-node.js` (lifted from sharesies
+   unmodified; it never cared what was flowing through it).
+2. The `#<seed>` in the invite link tells the browser page which room to
+   join. Once its `RTCDataChannel` opens, it registers a **service
+   worker** and loads your site in an iframe under `/t/<seed>/`.
+3. Every request the browser makes under that path — HTML, CSS, JS,
+   images, `fetch`/XHR — gets caught by the service worker, turned into a
+   `REQ_HEAD`/`REQ_BODY` frame over the data channel (see
+   `src/tunnel-protocol.js`), answered by a real HTTP request the host
+   fires at your local server, and streamed back as `RES_HEAD`/`RES_BODY`
+   frames that become a real `Response` on the other end.
+4. `WebSocket`s get the same royal treatment through a small virtual
+   `WebSocket` shim (a service worker can't intercept the WS upgrade
+   itself — see `web/src/rewrite.js`), relaying `WS_OPEN`/`WS_MSG`/
+   `WS_CLOSE` frames against a real socket the host opens locally.
 
-The proxy lives at a path prefix (`/t/<seed>/`), not the domain root, so
-`rewrite.js` also does best-effort rewriting of root-relative and
-tunnel-origin-absolute URLs — in served HTML/CSS attributes, `<script
+Because the proxy lives under a path prefix (`/t/<seed>/`) rather than the
+domain root, `rewrite.js` also rewrites root-relative and
+tunnel-origin-absolute URLs on the fly — HTML/CSS attributes, `<script
 type="importmap">` entries, redirect `Location` headers, and at runtime via
-an injected shim that patches `fetch`/`XHR`/`WebSocket` in the tunneled
-page — so they resolve back through the prefix instead of escaping it.
+a shim patching `fetch`/`XHR`/`WebSocket` inside the tunneled page — so
+everything keeps resolving through the prefix instead of escaping it.
 
-One class of request slips past all of that: a dynamic `import()` with a
-hardcoded absolute path (some plugin-loader systems do this) is never
-routed through `fetch`/`XHR`, so no shim can catch it — only the service
-worker's `fetch` event can, and only if the request falls inside its scope.
-A service worker's scope is capped at the directory it's served from, and
-GitHub Pages gives no way to widen that for a project page (no custom
-response headers, so `Service-Worker-Allowed` isn't achievable). That's why
-the hosted client lives at **`https://anentrypoint.github.io/`** (an org
-root Pages site, [`AnEntrypoint/AnEntrypoint.github.io`](https://github.com/AnEntrypoint/AnEntrypoint.github.io))
-rather than a `/nygrok/` project page — root scope means the service worker
-sees these requests too. When one arrives without the `/t/<seed>/` prefix,
-`sw.js` recovers the seed from the requesting document's own (still
-prefixed) location instead of the URL, then proxies it the same way.
+One thing slips past all of that: a dynamic `import()` with a hardcoded
+absolute path (a handful of plugin-loader systems do this) never touches
+`fetch`/`XHR`, so no shim can rewrite it — only the service worker's own
+`fetch` event stands a chance, and only inside its scope. A service
+worker's scope is capped at the directory it's served from, and GitHub
+Pages has no way to widen that for a project page. That's why the hosted
+client lives at **`https://anentrypoint.github.io/`** — an org *root*
+Pages site
+([`AnEntrypoint/AnEntrypoint.github.io`](https://github.com/AnEntrypoint/AnEntrypoint.github.io))
+instead of a `/nygrok/` subpath — root scope means the service worker sees
+those requests too. When one shows up with no `/t/<seed>/` prefix, `sw.js`
+recovers the seed from the requesting page's own (still prefixed) URL and
+proxies it anyway.
 
 ## Usage
 
@@ -120,37 +132,40 @@ npx github:AnEntrypoint/nygrok --key my-seed 3000     # stable invite link acros
 
 ### Password protection
 
+Want the link to not be enough on its own? Add a password:
+
 ```bash
-npx nygrok --password hunter2 3000
+npx github:AnEntrypoint/nygrok --password hunter2 3000
 ```
 
-The invite link alone is no longer enough — the page shows a small
-password prompt before it attempts to connect at all, and a wrong or
-missing password just never finds a peer (the room id is derived from
-`seed + password` together, so anyone without the right password can't
-even compute which room to look in — not a distinguishable "wrong
-password" error, since there's nothing to probe against). Give the link
-and the password through different channels; putting both in the same
-message defeats the point.
+Now the page shows a small password prompt *before* it even attempts to
+connect. Get it wrong (or leave it blank when one's required) and you just
+never find a peer — there's no "wrong password" error to probe against,
+because the room id itself is derived from `seed + password` together. If
+you don't have the right password, you can't even compute which room to
+look in.
 
-`--pw` is a shorthand for `--password`. Combine with `--key <seed>` for a
-stable link + password pair you can reuse across restarts.
+Give the link and the password out through different channels — putting
+both in the same message defeats the point.
+
+`--pw` is shorthand for `--password`. Pair it with `--key <seed>` for a
+stable link + password combo you can reuse across restarts.
 
 ### NAT-traversal tuning
 
-Same flags as sharesies' `--web` mode, for the same reasons (see its README
-for the full rationale):
+Same flags as sharesies' `--web` mode, for the same reasons (its README has
+the full rationale):
 
 ```bash
-npx nygrok --rtc-port-range 50000-51000 3000
-npx nygrok --rtc-udp-mux 3000
-npx nygrok --rtc-proxy socks5://user:pass@proxyhost:1080 3000
+npx github:AnEntrypoint/nygrok --rtc-port-range 50000-51000 3000
+npx github:AnEntrypoint/nygrok --rtc-udp-mux 3000
+npx github:AnEntrypoint/nygrok --rtc-proxy socks5://user:pass@proxyhost:1080 3000
 ```
 
-> **Needs a native binary.** Like sharesies' `--web` mode, this uses
+> **Needs a native binary.** Like sharesies' `--web` mode, this runs on
 > [node-datachannel](https://github.com/murat-dogan/node-datachannel)'s
-> native WebRTC binding. If install didn't fetch the prebuilt binary (you'll
-> see `Cannot find module '.../node_datachannel.node'`), fetch it directly:
+> native WebRTC binding. If install skipped the prebuilt binary (you'll see
+> `Cannot find module '.../node_datachannel.node'`), grab it directly:
 > `cd node_modules/node-datachannel && npx prebuild-install -r napi`.
 
 ### SDK
@@ -167,53 +182,51 @@ npm run dev:web    # rebuild web/bundle.js + web/sw.js on change
 npm run build:web  # one-off production build
 ```
 
-Serve `web/` with any static file server (service workers require a secure
-context, but `http://localhost:*` counts as one — no TLS needed for local
-testing) and open it with `#<seed>` matching a locally running
-`node nygrok.mjs <port>`.
+Serve `web/` with any static file server (service workers need a secure
+context, but `http://localhost:*` counts — no TLS required locally) and
+open it with `#<seed>` matching a locally running `node nygrok.mjs <port>`.
 
 ## Known limitations
 
-This is a best-effort browser-side reverse proxy, not a guarantee for every
-possible app — the same honest caveat any service-worker-based proxy has:
+This is a best-effort browser-side reverse proxy, not a magic guarantee for
+every possible app — the same honest caveat any service-worker-based proxy
+carries:
 
-- **URL rewriting is regex/attribute-based, not a full HTML/CSS/JS parser.**
-  It catches `href`/`src`/`action`/`srcset` attributes, CSS `url()`, import
-  map entries, redirect `Location` headers, and JS-initiated
-  `fetch`/`XHR`/`WebSocket` calls with root-relative or tunnel-origin-
-  absolute URLs — plus, since the hosted client runs at root scope, a
-  same-origin request that skips all of that (a hardcoded-absolute-path
-  dynamic `import()`) still gets caught and resolved via the requesting
-  document's own location. A site that constructs URLs in truly unusual ways
-  (e.g. string-concatenating a hostname deep inside a minified bundle, then
-  posting it to a *different* origin) may still not render correctly.
-- **No public plain-HTTP URL.** curl, webhooks, and bots can't reach a
-  tunnel — only a WebRTC-capable browser that opens the actual invite link.
-  This is deliberate (see "Why this is different from ngrok" above), not a
-  bug.
+- **URL rewriting is regex/attribute-based, not a full parser.** It catches
+  `href`/`src`/`action`/`srcset`, CSS `url()`, import map entries, redirect
+  `Location` headers, and JS-initiated `fetch`/`XHR`/`WebSocket` calls with
+  root-relative or tunnel-origin-absolute URLs — plus, since the hosted
+  client runs at root scope, even a same-origin hardcoded-absolute-path
+  dynamic `import()` gets caught and resolved. A site that builds URLs in
+  truly unusual ways (string-concatenating a hostname deep inside a
+  minified bundle, then posting it to a *different* origin) might still
+  misbehave.
+- **No public plain-HTTP URL.** curl, webhooks, and bots simply can't reach
+  a tunnel — only a WebRTC-capable browser opening the actual invite link
+  can. Deliberate, not a bug (see "Why not just use ngrok?" above).
 - **No CLI-native client.** v1 is WebRTC/browser-only; there's no
   `--connect` mode like sharesies has for its HyperDHT transport.
-- **Service workers are ephemeral.** A browser is free to terminate an idle
-  one; `web/src/sw.js` recovers automatically (it asks the page to
-  re-announce itself and waits briefly) but a request that lands in that
+- **Service workers are ephemeral.** The browser can terminate an idle one
+  at any time; `web/src/sw.js` recovers automatically (it asks the page to
+  re-announce itself and waits briefly), but a request landing in that
   narrow recovery window can be slightly delayed.
 - **Third-party cross-origin requests** (analytics, CDNs, a WebSocket to a
   genuinely different service) are deliberately left alone to hit the
-  network directly rather than being proxied — usually the right behavior,
-  but means they run under the viewer's own network conditions, not yours.
+  network directly instead of being proxied — usually correct, but means
+  they run under the viewer's own network conditions, not yours.
 
 ## Security
 
 Same posture as sharesies:
 
-- WebRTC traffic is encrypted via DTLS/SRTP per the WebRTC spec; signaling
-  happens over public nostr relays using a fresh, in-memory-only identity
-  generated per process — never persisted, never your real identity.
-- The seed is effectively a password: only someone with it can derive the
-  WebRTC room id. Generate a fresh one per session (the default) unless you
-  specifically want a stable, reusable link via `--key`.
+- WebRTC traffic is encrypted via DTLS/SRTP per spec; signaling runs over
+  public nostr relays using a fresh, in-memory-only identity generated per
+  process — never persisted, never tied to your real identity.
+- The seed is effectively a password: only someone holding it can derive
+  the WebRTC room id. A fresh one is generated per session by default;
+  reach for `--key` only when you actually want a stable, reusable link.
 - Your local machine is the only place the tunneled server runs — nygrok
-  relays traffic, it doesn't execute anything on your behalf.
+  relays traffic, it never executes anything on your behalf.
 
 ## License
 

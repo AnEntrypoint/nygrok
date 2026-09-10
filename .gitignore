@@ -8,3 +8,4 @@ web/sw.js
 web/sw.js.map
 *.swp
 *.stackdump
+config.bat

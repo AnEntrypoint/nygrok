@@ -24,15 +24,31 @@
   #gate button { background: #3b82f6; border: 0; color: #fff; border-radius: 6px; padding: 0.6rem 0.75rem; font: inherit; cursor: pointer; }
   #gate button:hover { background: #2f6fd8; }
   #gate p { margin: 0 0 0.25rem; color: #9aa7b8; font-size: 0.85rem; }
+  #gate-wrap { display: flex; flex-direction: column; gap: 1.25rem; width: 100%; max-width: 22rem; }
+  #no-seed h1 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+  #no-seed p { margin: 0 0 0.75rem; color: #9aa7b8; font-size: 0.9rem; }
+  #no-seed ol { margin: 0; padding-left: 1.2rem; font-size: 0.9rem; color: #d7dee5; }
+  #no-seed li { margin-bottom: 0.5rem; }
+  #no-seed code { background: #171d26; border: 1px solid #2a3341; border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.85em; }
 </style>
 </head>
 <body>
   <div id="gate">
-    <form id="gate-form">
-      <p>If the host set a password for this tunnel, enter it below. Leave blank otherwise.</p>
-      <input id="gate-password" type="password" autocomplete="off" placeholder="Password (if any)" />
-      <button type="submit">Connect</button>
-    </form>
+    <div id="gate-wrap">
+      <div id="no-seed" hidden>
+        <h1>nygrok</h1>
+        <p>A peer-to-peer localhost tunnel viewed straight from this page — no ports, no relay server, no account.</p>
+        <ol>
+          <li>Got an invite link? Open it directly — it looks like <code>#a1b2c3…</code> after the URL. This page alone can't connect to anything without one.</li>
+          <li>Want to share your own localhost? Run <code>npx github:AnEntrypoint/nygrok &lt;port&gt;</code> in a terminal — it prints an invite link for you to hand out.</li>
+        </ol>
+      </div>
+      <form id="gate-form">
+        <p>If the host set a password for this tunnel, enter it below. Leave blank otherwise.</p>
+        <input id="gate-password" type="password" autocomplete="off" placeholder="Password (if any)" />
+        <button type="submit">Connect</button>
+      </form>
+    </div>
   </div>
   <div id="status" hidden>connecting…</div>
   <iframe id="frame" hidden title="tunneled site"></iframe>
