@@ -20,6 +20,7 @@ const frameEl = document.getElementById('frame')
 const gateEl = document.getElementById('gate')
 const gateFormEl = document.getElementById('gate-form')
 const gatePasswordEl = document.getElementById('gate-password')
+const noSeedEl = document.getElementById('no-seed')
 
 function setStatus(text, isError) {
   if (!statusEl) return
@@ -29,7 +30,11 @@ function setStatus(text, isError) {
 
 const seed = decodeURIComponent(location.hash.slice(1))
 if (!seed) {
-  setStatus('No invite seed in the URL. Ask for a fresh link (it looks like ...#<seed>).', true)
+  // No invite link -- there's nothing for this page to connect to. Show the
+  // "how do I use this" instructions instead of a password form that would
+  // otherwise sit there doing nothing when submitted.
+  if (noSeedEl) noSeedEl.hidden = false
+  if (gateFormEl) gateFormEl.hidden = true
   throw new Error('nygrok: missing seed')
 }
 
